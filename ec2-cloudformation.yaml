@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Provisioning an EC2 instance within a custom network with Jenkins running on the instance using Cloudformation
+
+Resources:
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties: 
+      CidrBlock: 10.1.0.0/16
+      EnableDnsHostnames: True
+      EnableDnsSupport: True
+      InstanceTenancy: default
+      Tags: 
+        - Key: Name
+          Value: CBAProjectVPC
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: eu-west-2b
+      CidrBlock: 10.1.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags: 
+        - Key: Name
+          Value: ProjectPublicSubnet01
+      VpcId: !Ref VPC
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties: 
+      Tags: 
+        - Key: Name
+          Value: ProjectPublicRouteTable
+      VpcId: !Ref VPC   
+  
+  PublicRouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties: 
+        SubnetId: !Ref PublicSubnet
+        RouteTableId: !Ref PublicRouteTable
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: Security Group for Application
+      GroupName: Web SG
+      SecurityGroupIngress: 
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags: 
+        - Key: Name
+          Value: ProjectSG
+      VpcId: !Ref VPC
+
+  InternetGateWay:
+      Type: AWS::EC2::InternetGateway
+      Properties: 
+        Tags: 
+          - Key: Name
+            Value: ProjectIGW
+
+  InternetGateWayAttachment:
+      Type: AWS::EC2::VPCGatewayAttachment
+      Properties: 
+        InternetGatewayId: !Ref InternetGateWay
+        VpcId: !Ref VPC
+
+  NetworkAcl:
+    Type: 'AWS::EC2::NetworkAcl'
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties: 
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateWay
+      RouteTableId: !Ref PublicRouteTable
+
+  # EIPAddress:
+  #   Type: AWS::EC2::EIP
+
+  # EIPAssoc:
+  #   Type: AWS::EC2::EIPAssociation
+  #   Properties:
+  #     InstanceId: !Ref JenkinsServer
+  #     EIP: !Ref EIPAddress
+
+  JenkinsServer:
+      Type: AWS::EC2::Instance
+      Properties: 
+        BlockDeviceMappings: 
+          - DeviceName: /dev/xvda
+            Ebs: 
+              VolumeType: gp3
+              Iops: 3000
+              DeleteOnTermination: true
+              VolumeSize: 8
+        ImageId: ami-04706e771f950937f
+        InstanceType: t2.micro
+        KeyName: cba-web-KP
+        SecurityGroupIds: 
+          - !Ref SecurityGroup
+        SubnetId: !Ref PublicSubnet
+        Tags: 
+          - Key: Name
+            Value: JenkinsServer
+        UserData:
+          'Fn::Base64':
+            !Sub |
+              #!/bin/bash
+              sudo yum update -y 
+              sudo wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat-stable/jenkins.repo
+              sudo rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io.key
+              sudo yum upgrade
+              sudo amazon-linux-extras install java-openjdk11 -y
+              sudo yum install jenkins -y
+              sudo systemctl enable jenkins
+              sudo systemctl start jenkins
+              sudo systemctl status jenkins
+              sudo systemctl enable jenkins
+              sudo cat /var/lib/jenkins/secrets/initialAdminPassword
